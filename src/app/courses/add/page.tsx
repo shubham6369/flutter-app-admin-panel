@@ -4,7 +4,7 @@ import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { db, storage } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import {
     ArrowLeft,
     Save,
@@ -15,7 +15,8 @@ import {
     Youtube,
     Image as ImageIcon,
     Upload,
-    Loader2
+    Loader2,
+    CheckCircle2
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -23,8 +24,8 @@ import { useRouter } from "next/navigation";
 export default function AddCourse() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
-    const [uploadingLectures, setUploadingLectures] = useState<Record<number, boolean>>({});
-    const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
+    const [uploadingLectures, setUploadingLectures] = useState<Record<number, number>>({}); // stores percentage
+    const [uploadingThumbnail, setUploadingThumbnail] = useState<number | null>(null); // null or percentage
     const [course, setCourse] = useState({
         title: "",
         instructor: "",
@@ -41,45 +42,88 @@ export default function AddCourse() {
 
     const handleThumbnailUpload = async (file: File) => {
         if (!file) return;
-        setUploadingThumbnail(true);
+        setUploadingThumbnail(0);
+
         try {
             const fileRef = ref(storage, `courses/thumbnails/${Date.now()}_${file.name}`);
-            const snapshot = await uploadBytes(fileRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
-            setCourse(prev => ({ ...prev, thumbnail: downloadURL }));
-        } catch (error) {
-            console.error("Thumbnail upload failed:", error);
-            alert("Thumbnail upload failed.");
-        } finally {
-            setUploadingThumbnail(false);
+            const uploadTask = uploadBytesResumable(fileRef, file);
+
+            uploadTask.on('state_changed',
+                (snapshot) => {
+                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                    setUploadingThumbnail(Math.round(progress));
+                },
+                (error) => {
+                    console.error("Thumbnail upload failed:", error);
+                    alert("Thumbnail upload failed: " + error.message);
+                    setUploadingThumbnail(null);
+                },
+                async () => {
+                    const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                    setCourse(prev => ({ ...prev, thumbnail: downloadURL }));
+                    setUploadingThumbnail(null);
+                }
+            );
+        } catch (error: any) {
+            console.error("Thumbnail upload error:", error);
+            alert("Thumbnail upload error: " + error.message);
+            setUploadingThumbnail(null);
         }
     };
 
     const handleFileUpload = async (sectionId: number, lectureId: number, file: File) => {
         if (!file) return;
 
-        setUploadingLectures(prev => ({ ...prev, [lectureId]: true }));
+        setUploadingLectures(prev => ({ ...prev, [lectureId]: 0 }));
+
         try {
             const fileRef = ref(storage, `courses/lectures/${Date.now()}_${file.name}`);
-            const snapshot = await uploadBytes(fileRef, file);
-            const downloadURL = await getDownloadURL(snapshot.ref);
+            const uploadTask = uploadBytesResumable(fileRef, file);
 
-            setSections(sections.map(s => {
-                if (s.id === sectionId) {
-                    return {
-                        ...s,
-                        lectures: s.lectures.map((l: any) =>
-                            l.id === lectureId ? { ...l, url: downloadURL } : l
-                        )
-                    };
+            uploadTask.on('state_changed',
+                (snapshot) => {
+                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                    setUploadingLectures(prev => ({ ...prev, [lectureId]: Math.round(progress) }));
+                },
+                (error) => {
+                    console.error("Upload failed:", error);
+                    alert("Upload failed: " + error.message);
+                    setUploadingLectures(prev => {
+                        const next = { ...prev };
+                        delete next[lectureId];
+                        return next;
+                    });
+                },
+                async () => {
+                    const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+
+                    setSections(sections.map(s => {
+                        if (s.id === sectionId) {
+                            return {
+                                ...s,
+                                lectures: s.lectures.map((l: any) =>
+                                    l.id === lectureId ? { ...l, url: downloadURL } : l
+                                )
+                            };
+                        }
+                        return s;
+                    }));
+
+                    setUploadingLectures(prev => {
+                        const next = { ...prev };
+                        delete next[lectureId];
+                        return next;
+                    });
                 }
-                return s;
-            }));
-        } catch (error) {
-            console.error("Upload failed:", error);
-            alert("Upload failed. Please try again.");
-        } finally {
-            setUploadingLectures(prev => ({ ...prev, [lectureId]: false }));
+            );
+        } catch (error: any) {
+            console.error("Upload error:", error);
+            alert("Upload error: " + error.message);
+            setUploadingLectures(prev => {
+                const next = { ...prev };
+                delete next[lectureId];
+                return next;
+            });
         }
     };
 
@@ -258,9 +302,9 @@ export default function AddCourse() {
                                                     </div>
                                                     {(lecture.type === 'video' || lecture.type === 'pdf') && (
                                                         <label style={{
-                                                            cursor: uploadingLectures[lecture.id] ? 'not-allowed' : 'pointer',
-                                                            backgroundColor: 'rgba(6,182,212,0.1)',
-                                                            color: 'var(--primary)',
+                                                            cursor: uploadingLectures[lecture.id] !== undefined ? 'not-allowed' : 'pointer',
+                                                            backgroundColor: lecture.url ? 'rgba(16,185,129,0.1)' : 'rgba(6,182,212,0.1)',
+                                                            color: lecture.url ? '#10b981' : 'var(--primary)',
                                                             padding: '8px 12px',
                                                             borderRadius: '8px',
                                                             fontSize: '0.875rem',
@@ -269,8 +313,16 @@ export default function AddCourse() {
                                                             gap: '8px',
                                                             fontWeight: 600
                                                         }}>
-                                                            {uploadingLectures[lecture.id] ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                                                            {uploadingLectures[lecture.id] ? 'Uploading...' : 'Upload File'}
+                                                            {uploadingLectures[lecture.id] !== undefined ? (
+                                                                <Loader2 size={16} className="animate-spin" />
+                                                            ) : lecture.url ? (
+                                                                <CheckCircle2 size={16} />
+                                                            ) : (
+                                                                <Upload size={16} />
+                                                            )}
+                                                            {uploadingLectures[lecture.id] !== undefined
+                                                                ? `Uploading ${uploadingLectures[lecture.id]}%`
+                                                                : lecture.url ? 'File Ready' : 'Upload File'}
                                                             <input
                                                                 type="file"
                                                                 style={{ display: 'none' }}
@@ -279,7 +331,7 @@ export default function AddCourse() {
                                                                     const file = e.target.files?.[0];
                                                                     if (file) handleFileUpload(section.id, lecture.id, file);
                                                                 }}
-                                                                disabled={uploadingLectures[lecture.id]}
+                                                                disabled={uploadingLectures[lecture.id] !== undefined}
                                                             />
                                                         </label>
                                                     )}
@@ -375,16 +427,24 @@ export default function AddCourse() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                                 <h3 style={{ margin: 0 }}>Thumbnail</h3>
                                 <label style={{
-                                    cursor: uploadingThumbnail ? 'not-allowed' : 'pointer',
-                                    color: 'var(--primary)',
+                                    cursor: uploadingThumbnail !== null ? 'not-allowed' : 'pointer',
+                                    color: course.thumbnail ? '#10b981' : 'var(--primary)',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '4px',
                                     fontWeight: 600,
                                     fontSize: '0.875rem'
                                 }}>
-                                    {uploadingThumbnail ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                                    {uploadingThumbnail ? 'Uploading...' : 'Upload Image'}
+                                    {uploadingThumbnail !== null ? (
+                                        <Loader2 size={16} className="animate-spin" />
+                                    ) : course.thumbnail ? (
+                                        <CheckCircle2 size={16} />
+                                    ) : (
+                                        <Upload size={16} />
+                                    )}
+                                    {uploadingThumbnail !== null
+                                        ? `Uploading ${uploadingThumbnail}%`
+                                        : course.thumbnail ? 'Image Updated' : 'Upload Image'}
                                     <input
                                         type="file"
                                         style={{ display: 'none' }}
@@ -393,7 +453,7 @@ export default function AddCourse() {
                                             const file = e.target.files?.[0];
                                             if (file) handleThumbnailUpload(file);
                                         }}
-                                        disabled={uploadingThumbnail}
+                                        disabled={uploadingThumbnail !== null}
                                     />
                                 </label>
                             </div>
