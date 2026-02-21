@@ -1,0 +1,5 @@
+f5693be9 Admin Panel Sync: Added Dashboard, Courses, Live Classes, and Sales analytics
+adb71595 Fix Vercel framework detection and package configuration
+73491281 Add empty public directory for Vercel deployment
+86cc55b1 Initial commit of Admin Panel
+03d53291 Initial commit of JEE NEET Pulse Admin Panel

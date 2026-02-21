@@ -1,0 +1,25 @@
+{
+  "name": "admin-panel",
+  "version": "1.0.0",
+  "description": "JEE NEET Pulse Admin Panel",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "firebase": "latest",
+    "lucide-react": "latest",
+    "recharts": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}
