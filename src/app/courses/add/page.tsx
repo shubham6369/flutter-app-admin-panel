@@ -4,6 +4,7 @@ import { useState } from "react";
 import Sidebar from "@/components/Sidebar";
 import { db, storage } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
     ArrowLeft,
     Save,
@@ -12,7 +13,9 @@ import {
     FileText,
     Video,
     Youtube,
-    Image as ImageIcon
+    Image as ImageIcon,
+    Upload,
+    Loader2
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -20,6 +23,8 @@ import { useRouter } from "next/navigation";
 export default function AddCourse() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
+    const [uploadingLectures, setUploadingLectures] = useState<Record<number, boolean>>({});
+    const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
     const [course, setCourse] = useState({
         title: "",
         instructor: "",
@@ -33,6 +38,50 @@ export default function AddCourse() {
     const [sections, setSections] = useState<any[]>([
         { id: Date.now(), title: "Introduction", lectures: [] }
     ]);
+
+    const handleThumbnailUpload = async (file: File) => {
+        if (!file) return;
+        setUploadingThumbnail(true);
+        try {
+            const fileRef = ref(storage, `courses/thumbnails/${Date.now()}_${file.name}`);
+            const snapshot = await uploadBytes(fileRef, file);
+            const downloadURL = await getDownloadURL(snapshot.ref);
+            setCourse(prev => ({ ...prev, thumbnail: downloadURL }));
+        } catch (error) {
+            console.error("Thumbnail upload failed:", error);
+            alert("Thumbnail upload failed.");
+        } finally {
+            setUploadingThumbnail(false);
+        }
+    };
+
+    const handleFileUpload = async (sectionId: number, lectureId: number, file: File) => {
+        if (!file) return;
+
+        setUploadingLectures(prev => ({ ...prev, [lectureId]: true }));
+        try {
+            const fileRef = ref(storage, `courses/lectures/${Date.now()}_${file.name}`);
+            const snapshot = await uploadBytes(fileRef, file);
+            const downloadURL = await getDownloadURL(snapshot.ref);
+
+            setSections(sections.map(s => {
+                if (s.id === sectionId) {
+                    return {
+                        ...s,
+                        lectures: s.lectures.map((l: any) =>
+                            l.id === lectureId ? { ...l, url: downloadURL } : l
+                        )
+                    };
+                }
+                return s;
+            }));
+        } catch (error) {
+            console.error("Upload failed:", error);
+            alert("Upload failed. Please try again.");
+        } finally {
+            setUploadingLectures(prev => ({ ...prev, [lectureId]: false }));
+        }
+    };
 
     const addSection = () => {
         setSections([...sections, { id: Date.now(), title: "", lectures: [] }]);
@@ -68,6 +117,10 @@ export default function AddCourse() {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!course.title || !course.price) {
+            alert("Please fill in course title and price.");
+            return;
+        }
         setLoading(true);
 
         try {
@@ -177,27 +230,59 @@ export default function AddCourse() {
 
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                                         {section.lectures.map((lecture: any, lIndex: number) => (
-                                            <div key={lecture.id} style={{ display: 'flex', gap: '1rem', backgroundColor: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px' }}>
-                                                <div style={{ flex: 1 }}>
-                                                    <input
-                                                        className="input-field"
-                                                        style={{ margin: 0, padding: '0.5rem', fontSize: '0.875rem' }}
-                                                        value={lecture.title}
-                                                        onChange={e => updateLecture(section.id, lecture.id, "title", e.target.value)}
-                                                        placeholder="Lecture Title"
-                                                    />
+                                            <div key={lecture.id} style={{ backgroundColor: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px' }}>
+                                                <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.8rem' }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <input
+                                                            className="input-field"
+                                                            style={{ margin: 0, padding: '0.5rem', fontSize: '0.875rem' }}
+                                                            value={lecture.title}
+                                                            onChange={e => updateLecture(section.id, lecture.id, "title", e.target.value)}
+                                                            placeholder="Lecture Title"
+                                                        />
+                                                    </div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', color: '#94a3b8' }}>
+                                                        {lecture.type === 'youtube' ? <Youtube size={18} /> : lecture.type === 'video' ? <Video size={18} /> : <FileText size={18} />}
+                                                    </div>
                                                 </div>
-                                                <div style={{ flex: 2 }}>
-                                                    <input
-                                                        className="input-field"
-                                                        style={{ margin: 0, padding: '0.5rem', fontSize: '0.875rem' }}
-                                                        value={lecture.url}
-                                                        onChange={e => updateLecture(section.id, lecture.id, "url", e.target.value)}
-                                                        placeholder={lecture.type === 'youtube' ? "YouTube Link" : "Video/PDF URL"}
-                                                    />
-                                                </div>
-                                                <div style={{ display: 'flex', alignItems: 'center', color: '#94a3b8' }}>
-                                                    {lecture.type === 'youtube' ? <Youtube size={18} /> : lecture.type === 'video' ? <Video size={18} /> : <FileText size={18} />}
+
+                                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <input
+                                                            className="input-field"
+                                                            style={{ margin: 0, padding: '0.5rem', fontSize: '0.875rem' }}
+                                                            value={lecture.url}
+                                                            onChange={e => updateLecture(section.id, lecture.id, "url", e.target.value)}
+                                                            placeholder={lecture.type === 'youtube' ? "YouTube Link" : "Video/PDF URL"}
+                                                        />
+                                                    </div>
+                                                    {(lecture.type === 'video' || lecture.type === 'pdf') && (
+                                                        <label style={{
+                                                            cursor: uploadingLectures[lecture.id] ? 'not-allowed' : 'pointer',
+                                                            backgroundColor: 'rgba(6,182,212,0.1)',
+                                                            color: 'var(--primary)',
+                                                            padding: '8px 12px',
+                                                            borderRadius: '8px',
+                                                            fontSize: '0.875rem',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '8px',
+                                                            fontWeight: 600
+                                                        }}>
+                                                            {uploadingLectures[lecture.id] ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                                                            {uploadingLectures[lecture.id] ? 'Uploading...' : 'Upload File'}
+                                                            <input
+                                                                type="file"
+                                                                style={{ display: 'none' }}
+                                                                accept={lecture.type === 'video' ? 'video/*' : 'application/pdf'}
+                                                                onChange={(e) => {
+                                                                    const file = e.target.files?.[0];
+                                                                    if (file) handleFileUpload(section.id, lecture.id, file);
+                                                                }}
+                                                                disabled={uploadingLectures[lecture.id]}
+                                                            />
+                                                        </label>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
@@ -287,7 +372,31 @@ export default function AddCourse() {
                         </div>
 
                         <div className="glass" style={{ padding: '1.5rem' }}>
-                            <h3 style={{ marginBottom: '1.5rem' }}>Thumbnail</h3>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                                <h3 style={{ margin: 0 }}>Thumbnail</h3>
+                                <label style={{
+                                    cursor: uploadingThumbnail ? 'not-allowed' : 'pointer',
+                                    color: 'var(--primary)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontWeight: 600,
+                                    fontSize: '0.875rem'
+                                }}>
+                                    {uploadingThumbnail ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                                    {uploadingThumbnail ? 'Uploading...' : 'Upload Image'}
+                                    <input
+                                        type="file"
+                                        style={{ display: 'none' }}
+                                        accept="image/*"
+                                        onChange={(e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file) handleThumbnailUpload(file);
+                                        }}
+                                        disabled={uploadingThumbnail}
+                                    />
+                                </label>
+                            </div>
                             <div style={{
                                 width: '100%',
                                 aspectRatio: '16/9',
